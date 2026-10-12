@@ -1,0 +1,51 @@
+name: Build APK
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Unzip Baby code
+        run: unzip -q BabyAssistant.zip
+      - name: Create RN project and add Baby code
+        run: |
+          npx --yes @react-native-community/cli@13 init BabyAssistant --version 0.74.5 --package-name com.baby.assistant --skip-install --skip-git-init
+          B=Baby/android/app/src/main
+          T=BabyAssistant/android/app/src/main
+          cp Baby/App.tsx Baby/index.js BabyAssistant/
+          cp -r Baby/src BabyAssistant/
+          cp $B/java/com/baby/assistant/*.kt $T/java/com/baby/assistant/
+          mkdir -p $T/res/xml
+          cp $B/res/xml/accessibility_config.xml $T/res/xml/
+          python3 - <<'PY'
+          import pathlib
+          A = pathlib.Path('BabyAssistant/android/app/src/main')
+          snip = pathlib.Path('Baby/android/app/src/main/AndroidManifest.snippet.xml').read_text()
+          perms, services = snip.split('<!-- inside <application> -->')
+          perms = '\n'.join(l for l in perms.splitlines() if 'permission.INTERNET' not in l and not l.strip().startswith('<!--'))
+          m = (A/'AndroidManifest.xml').read_text()
+          m = m.replace('<application', perms + '\n<application', 1).replace('</application>', services + '\n</application>', 1)
+          (A/'AndroidManifest.xml').write_text(m)
+          s = A/'res/values/strings.xml'
+          s.write_text(s.read_text().replace('</resources>', '<string name="a11y_desc">Lets the assistant control apps by voice</string></resources>'))
+          p = A/'java/com/baby/assistant/MainApplication.kt'
+          p.write_text(p.read_text().replace('// add(MyReactNativePackage())', 'add(com.baby.assistant.BabyPackage())'))
+          PY
+      - name: Install and build
+        working-directory: BabyAssistant
+        run: |
+          npm install
+          npm install react-native-svg react-native-tts react-native-webview @react-native-async-storage/async-storage
+          cd android && ./gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Baby-APK
+          path: BabyAssistant/android/app/build/outputs/apk/debug/app-debug.apk
+          
